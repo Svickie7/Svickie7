@@ -1,10 +1,35 @@
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import explode, expr, regexp_extract
+
+# Initialize SparkSession
+spark = SparkSession.builder \
+    .appName("Flatten JSON") \
+    .getOrCreate()
+
+# Sample data with headers
+data_with_headers = [
+    (900, [
+        "{100:[Chocolate|10|A]}",
+        "{100:[Regular|10|A]}",
+        "{100:[Regular|10|A]}",
+        "{100:[Regular|10|A]}"
+    ]),
+    (901, [
+        "{100:[Chocolate|10|A]}",
+        "{100:[Regular|10|A]}",
+        "{100:[Regular|10|A]}",
+        "{100:[Regular|10|A]}"
+    ])
+]
+
+# Create DataFrame with headers
 df_with_headers = spark.createDataFrame(data_with_headers, ["id", "headers"])
 
 # Explode the array and flatten
 df_flattened = df_with_headers.withColumn("header", explode("headers")).select(
     expr("id"),
-    expr("substring(header, 2, 3) as product_id"),
-    expr("regexp_extract(header, '\\[(.*?)\\]', 1) as product_info")
+    regexp_extract("header", r'{(\d+)', 1).alias("product_id"),
+    regexp_extract("header", r'\[(.*?)\]', 1).alias("product_info")
 ).select(
     expr("id"),
     expr("product_id"),
@@ -12,3 +37,6 @@ df_flattened = df_with_headers.withColumn("header", explode("headers")).select(
     expr("split(product_info, '\\|')[1] as quantity"),
     expr("split(product_info, '\\|')[2] as grade")
 )
+
+# Show the result
+df_flattened.show(truncate=False)
