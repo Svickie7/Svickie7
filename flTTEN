@@ -1,0 +1,14 @@
+df_with_headers = spark.createDataFrame(data_with_headers, ["id", "headers"])
+
+# Explode the array and flatten
+df_flattened = df_with_headers.withColumn("header", explode("headers")).select(
+    expr("id"),
+    expr("substring(header, 2, 3) as product_id"),
+    expr("regexp_extract(header, '\\[(.*?)\\]', 1) as product_info")
+).select(
+    expr("id"),
+    expr("product_id"),
+    expr("split(product_info, '\\|')[0] as type"),
+    expr("split(product_info, '\\|')[1] as quantity"),
+    expr("split(product_info, '\\|')[2] as grade")
+)
