@@ -1,65 +1,46 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import from_json, col, explode, explode_outer, monotonically_increasing_id
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, ArrayType
-import time
+from pyspark.sql.functions import col, expr, from_json
+from pyspark.sql.types import StructType, StringType
 
-def flatten_json_df(df):
-    # Parse JSON string column into a struct type
-    df = df.withColumn("data_struct", from_json(col("json_col"), StructType([])))
-    
-    # Define a function to recursively flatten structs and arrays
-    def flatten_struct(struct_df, prefix=""):
-        flat_df = struct_df
-        for field in struct_df.schema.fields:
-            column_name = prefix + field.name
-            if isinstance(field.dataType, StructType):
-                flat_df = flatten_struct(flat_df.withColumn(column_name, col(column_name)), column_name + "_")
-                flat_df = flat_df.drop(column_name)
-            elif isinstance(field.dataType, ArrayType):
-                flat_df = flat_df.withColumn(column_name, explode_outer(col(column_name)))
-                flat_df = flat_df.selectExpr("*", f"explode_outer({column_name}) as {column_name}_exploded")
-                flat_df = flat_df.drop(column_name)
-                flat_df = flat_df.withColumnRenamed(f"{column_name}_exploded", column_name)
-        return flat_df
-
-    # Flatten the struct recursively
-    flattened_df = flatten_struct(df)
-    
-    # Add a unique row identifier column
-    flattened_df = flattened_df.withColumn("row_id", monotonically_increasing_id())
-    
-    return flattened_df
-
-# Sample JSON DataFrame with complex JSON column and an id column
-# Replace this with your actual DataFrame
-# For demonstration purposes, I'll create a DataFrame with a single row
-sample_json_data = [
-    (1, '{"id": 1, "name": "John", "skills": ["Python", "Java"], "projects": [{"name": "Project A", "status": "In Progress"}]}'),
-    (2, '{"id": 2, "name": "Alice", "skills": ["Scala", "SQL"], "projects": [{"name": "Project B", "status": "Completed"}]}')
-]
-
-# Initialize SparkSession
+# Create SparkSession
 spark = SparkSession.builder \
-    .appName("JSON Flattening Benchmark") \
+    .appName("Dynamic Deep Flatten JSON") \
     .getOrCreate()
 
-# Create DataFrame from JSON data with id column
-df = spark.createDataFrame(sample_json_data, ["id", "json_col"])
+# Sample DataFrame with JSON data
+data = [
+    (1001, '{"id": "0001", "type": "donut", "name": "Cake", "ppu": 0.55, "batters": {"batter": [{"id": "1001", "type": "Regular"}, {"id": "1002", "type": "Chocolate"}, {"id": "1003", "type": "Blueberry"}, {"id": "1004", "type": "Devil\'s Food"}]}, "topping": [{"id": "5001", "type": "None"}, {"id": "5002", "type": "Glazed"}, {"id": "5005", "type": "Sugar"}, {"id": "5007", "type": "Powdered Sugar"}, {"id": "5006", "type": "Chocolate with Sprinkles"}, {"id": "5003", "type": "Chocolate"}, {"id": "5004", "type": "Maple"}]}'),
+    (1002, '{"id": "0001", "type": "donut", "name": "Cake", "ppu": 0.55, "batters": {"batter": [{"id": "1001", "type": "Regular"}, {"id": "1002", "type": "Chocolate"}, {"id": "1003", "type": "Blueberry"}, {"id": "1004", "type": "Devil\'s Food"}]}, "topping": [{"id": "5001", "type": "None"}, {"id": "5002", "type": "Glazed"}, {"id": "5005", "type": "Sugar"}, {"id": "5007", "type": "Powdered Sugar"}, {"id": "5006", "type": "Chocolate with Sprinkles"}, {"id": "5003", "type": "Chocolate"}, {"id": "5004", "type": "Maple"}]}')
+]
 
-# Measure execution time
-start_time = time.time()
+# Define schema dynamically
+schema = StructType() \
+    .add("product_id", StringType(), False) \
+    .add("json_data", StringType(), False)
 
-# Flatten JSON data fully
-flattened_df = flatten_json_df(df)
+# Create DataFrame
+df = spark.createDataFrame(data, schema=schema)
 
-# Calculate execution time
-execution_time = time.time() - start_time
+# Function to recursively flatten JSON data
+def flatten_json(df, prefix=""):
+    flat_cols = []
+    for col_name in df.schema.names:
+        if isinstance(df.schema[col_name].dataType, StructType):
+            if prefix == "":
+                flat_cols += flatten_json(df.selectExpr(f"{col_name}.*"), f"{col_name}.")
+            else:
+                flat_cols += flatten_json(df.selectExpr(f"{prefix}{col_name}.*"), f"{prefix}{col_name}.")
+        else:
+            flat_cols.append(expr(f"{prefix}{col_name} as {prefix.replace('.', '_')}{col_name.replace('.', '_')}"))
+    return flat_cols
 
-# Display flattened DataFrame
+# Flatten JSON data deeply and dynamically
+flattened_df = df.withColumn("json_data", from_json(col("json_data"), schema=StructType())) \
+    .selectExpr("product_id", "json_data.*") \
+    .select(flatten_json(col("*")))
+
+# Show the dynamically flattened DataFrame
 flattened_df.show(truncate=False)
-
-# Display execution time
-print("Execution Time: {:.4f} seconds".format(execution_time))
 
 # Stop SparkSession
 spark.stop()
